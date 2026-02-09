@@ -1,0 +1,2 @@
+Trade,Status,Details
+"{'Ticker': 'BB', 'Quantity': 44, 'Buy Price': 4.542599999999999, 'Max Price': 4.723399999999999, 'Trigger Price': 4.723399999999999, 'Trailing Percent': 0.5}",FAILED,Expecting value: line 1 column 1 (char 0)

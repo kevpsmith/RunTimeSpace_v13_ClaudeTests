@@ -1,0 +1,14 @@
+{
+    "client_id": "zydiv8GFO3BTI8f3sfA8HkBz3HaxWXDK",
+    "client_secret": "U7YCjG5Z2plRYaHj",
+    "redirect_uri": "https://127.0.0.1",
+    "access_token": "I0.b2F1dGgyLmNkYy5zY2h3YWIuY29t.GQCbk3CsG-1IAQ1zD6x0yPGYMCFINvZKGWArjTTH4Y4@",
+    "refresh_token": "vKuv7h-3TobVtzTAs-Hn2ss30dcZTIjwQxmVkDyjySa1a7AA0aLSCADyaTCxlogdnewPZLgcLxejW55j_PXn0raTAYx-i2hK-ktqIZMzawJTnuu0iyKualgMDQgMeN6PIUbULEgmlSw@",
+    "expires_at": 1748800129.8878267,
+    "auth_url": "https://api.schwabapi.com/v1/oauth/authorize",
+    "token_url": "https://api.schwabapi.com/v1/oauth/token",
+    "base_url": "https://api.schwabapi.com/trader/v1",
+    "auth_code": "C0.b2F1dGgyLmJkYy5zY2h3YWIuY29t.pGKH8bNgA0NaEVRmy-DtZAdmWMmOJdCiKDx8lZxxUfQ@",
+    "account_id": "7C7B0A4B2BEB039A4BA22858DE835E96798E4EA42DE530070EF5A65280A53B31",
+    "polygon_api_key": "cvV9m9XNz41uD7SMCLqftmzWKwDCI_9x"
+}
