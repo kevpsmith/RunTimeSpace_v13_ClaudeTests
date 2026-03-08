@@ -3,9 +3,10 @@ Backtest Runner: Full pipeline for Jan-Jul 2025
 Runs data acquisition + training + prediction for each trading day.
 
 Usage:
-    python backtest/Backtest_Runner.py                    # Run full Jan-Jul 2025
-    python backtest/Backtest_Runner.py --start 2025-03-01 # Start from a specific date
-    python backtest/Backtest_Runner.py --skip-acquisition  # Skip data acquisition (use existing data)
+    python backtest/Backtest_Runner.py                     # Weekly (first trading day of each week), Jan-Jul 2025
+    python backtest/Backtest_Runner.py --daily              # Every trading day (much slower)
+    python backtest/Backtest_Runner.py --start 2025-03-01   # Start from a specific date
+    python backtest/Backtest_Runner.py --skip-acquisition   # Skip data acquisition (use existing data)
 """
 import os
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -34,11 +35,29 @@ import json
 import traceback
 
 
-def generate_trading_days(start_date, end_date):
-    """Generate US trading days (weekdays minus federal holidays)."""
+def generate_trading_days(start_date, end_date, weekly=False):
+    """Generate US trading days (weekdays minus federal holidays).
+
+    Args:
+        start_date: Start date string (YYYY-MM-DD)
+        end_date: End date string (YYYY-MM-DD)
+        weekly: If True, only return the first trading day of each week
+    """
     us_holidays = USFederalHolidayCalendar()
     us_business_day = CustomBusinessDay(calendar=us_holidays)
     trading_days = pd.date_range(start=start_date, end=end_date, freq=us_business_day)
+
+    if weekly:
+        # Group by (year, week number) and take the first trading day of each week
+        seen_weeks = set()
+        weekly_days = []
+        for d in trading_days:
+            week_key = (d.isocalendar()[0], d.isocalendar()[1])
+            if week_key not in seen_weeks:
+                seen_weeks.add(week_key)
+                weekly_days.append(d)
+        trading_days = weekly_days
+
     return [d.strftime('%Y-%m-%d') for d in trading_days]
 
 
@@ -174,12 +193,16 @@ def main():
     parser.add_argument('--end', type=str, default='2025-07-31', help='End date (YYYY-MM-DD)')
     parser.add_argument('--skip-acquisition', action='store_true', help='Skip data acquisition, use existing data')
     parser.add_argument('--skip-training', action='store_true', help='Skip training, use existing predictions')
+    parser.add_argument('--daily', action='store_true', help='Run every trading day (default is weekly: first trading day of each week)')
     parser.add_argument('--key', type=str, default='cvV9m9XNz41uD7SMCLqftmzWKwDCI_9x', help='Polygon API key')
     parser.add_argument('--output-dir', type=str, default='backtest_predictions', help='Output directory for predictions')
     args = parser.parse_args()
 
-    trading_days = generate_trading_days(args.start, args.end)
-    print(f"Total trading days to backtest: {len(trading_days)}")
+    weekly = not args.daily
+    trading_days = generate_trading_days(args.start, args.end, weekly=weekly)
+    mode = "daily" if args.daily else "weekly (first trading day of each week)"
+    print(f"Mode: {mode}")
+    print(f"Total dates to backtest: {len(trading_days)}")
     print(f"Date range: {trading_days[0]} to {trading_days[-1]}")
 
     ticker_dir = os.path.join('data', 'daily_data')
