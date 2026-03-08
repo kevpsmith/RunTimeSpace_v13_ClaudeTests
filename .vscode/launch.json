@@ -15,6 +15,40 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/this_studio" // Optional: add this_studio to PYTHONPATH
             }
+        },
+        {
+            "name": "Backtest: Smoke Test (Jan 2025)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/backtest/Backtest_Smoke_Test.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Backtest: Full Run (Weekly)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/backtest/Backtest_Runner.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Backtest: Full Run (Daily)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/backtest/Backtest_Runner.py",
+            "args": ["--daily"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
         }
     ]
 }
