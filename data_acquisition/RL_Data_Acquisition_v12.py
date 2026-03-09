@@ -1,8 +1,8 @@
-import polygon
+from polygon import RESTClient
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import math
-import pickle 
+import pickle
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -25,8 +25,7 @@ class PolygonDataFetcher:
             rate_limit_pause: Pause between API calls to respect rate limits
         """
         self.key = key
-        self.stocks_client = polygon.StocksClient(key, connect_timeout = 240, read_timeout = 240)
-        self.reference_client = polygon.ReferenceClient(key, connect_timeout = 240, read_timeout = 240)
+        self.client = RESTClient(api_key=key)
         # Date Configuration
         self.analysis_date_end = pd.to_datetime(analysis_date_end, format='%Y-%m-%d')
         self.analysis_date_start = self.analysis_date_end - relativedelta(years=5)
@@ -104,16 +103,15 @@ class PolygonDataFetcher:
 
         # Get dates from first ticker
         dates = []
-        placeholder = self.stocks_client.get_aggregate_bars(
-            TICKERS[1], 
-            self.analysis_date_start, 
-            self.analysis_date_end, 
-            timespan='day',
-            full_range=True, 
-            run_parallel=False
-        )
+        placeholder = list(self.client.list_aggs(
+            TICKERS[1],
+            1,
+            'day',
+            self.analysis_date_start.strftime('%Y-%m-%d'),
+            self.analysis_date_end.strftime('%Y-%m-%d'),
+        ))
         for k in placeholder:
-            date = datetime.fromtimestamp(k['t']/1000)
+            date = datetime.fromtimestamp(k.timestamp/1000)
             if date.weekday() < 5:
                 dates.append(date.strftime('%Y-%m-%d'))
         dates = sorted(dates)
@@ -136,14 +134,13 @@ class PolygonDataFetcher:
         # Process price data in parallel
         def fetch_price_data(ticker):
             try:
-                bars = self.stocks_client.get_aggregate_bars(
+                bars = list(self.client.list_aggs(
                     ticker,
+                    1,
+                    'day',
                     self.analysis_date_start.strftime('%Y-%m-%d'),
                     self.analysis_date_end.strftime('%Y-%m-%d'),
-                    timespan='day',
-                    full_range=True,
-                    run_parallel=False
-                )
+                ))
                 time.sleep(self.rate_limit_pause)
                 return ticker, bars
             except Exception as e:
@@ -156,20 +153,20 @@ class PolygonDataFetcher:
             for ticker, bars in executor.map(fetch_price_data, TICKERS):
                 if bars:
                     for bar in bars:
-                        date = datetime.fromtimestamp(bar['t']/1000).strftime('%Y-%m-%d')
+                        date = datetime.fromtimestamp(bar.timestamp/1000).strftime('%Y-%m-%d')
                         if date in dates:
-                            dataframes['closing'].loc[ticker, date] = bar.get('c', np.nan)
-                            dataframes['high'].loc[ticker, date] = bar.get('h', np.nan)     # Added
-                            dataframes['low'].loc[ticker, date] = bar.get('l', np.nan)      # Added
-                            dataframes['volume'].loc[ticker, date] = bar.get('v', np.nan)
-                            dataframes['trades'].loc[ticker, date] = bar.get('n', np.nan)
+                            dataframes['closing'].loc[ticker, date] = bar.close if bar.close is not None else np.nan
+                            dataframes['high'].loc[ticker, date] = bar.high if bar.high is not None else np.nan
+                            dataframes['low'].loc[ticker, date] = bar.low if bar.low is not None else np.nan
+                            dataframes['volume'].loc[ticker, date] = bar.volume if bar.volume is not None else np.nan
+                            dataframes['trades'].loc[ticker, date] = bar.transactions if bar.transactions is not None else np.nan
 
         # Process RSI data in parallel
         def fetch_rsi_data(ticker):
             try:
-                rsi_d = self.stocks_client.get_rsi(ticker, timestamp_gte=self.analysis_date_start, timespan='day', window_size=14, adjusted=True, limit=5000)
+                rsi_d = self.client.get_rsi(ticker, timestamp_gte=self.analysis_date_start.strftime('%Y-%m-%d'), timespan='day', window=14, adjusted=True, limit=5000)
                 time.sleep(self.rate_limit_pause)
-                rsi_w = self.stocks_client.get_rsi(ticker, timestamp_gte=self.analysis_date_start, timespan='week', window_size=14, adjusted=True, limit=5000)
+                rsi_w = self.client.get_rsi(ticker, timestamp_gte=self.analysis_date_start.strftime('%Y-%m-%d'), timespan='week', window=14, adjusted=True, limit=5000)
                 time.sleep(self.rate_limit_pause)
                 return ticker, (rsi_d, rsi_w)
             except Exception as e:
@@ -183,20 +180,20 @@ class PolygonDataFetcher:
             for ticker, rsi_data in executor.map(fetch_rsi_data, TICKERS):
                 if rsi_data:
                     rsi_d, rsi_w = rsi_data
-                    if 'results' in rsi_d and 'values' in rsi_d['results']:
-                        for entry in rsi_d['results']['values']:
-                            date = datetime.fromtimestamp(entry['timestamp']/1000).strftime('%Y-%m-%d')
+                    if rsi_d and rsi_d.values:
+                        for entry in rsi_d.values:
+                            date = datetime.fromtimestamp(entry.timestamp/1000).strftime('%Y-%m-%d')
                             if date in dates:
-                                dataframes['rsi_daily'].loc[ticker, date] = entry['value']
+                                dataframes['rsi_daily'].loc[ticker, date] = entry.value
                     # Modified weekly RSI handling
-                    if 'results' in rsi_w and 'values' in rsi_w['results']:
-                        for entry in rsi_w['results']['values']:
-                            sunday_date = pd.to_datetime(entry['timestamp'], unit='ms')
+                    if rsi_w and rsi_w.values:
+                        for entry in rsi_w.values:
+                            sunday_date = pd.to_datetime(entry.timestamp, unit='ms')
                             # Find index of next date after Sunday
                             idx = np.searchsorted(dates_array, sunday_date)
                             if idx < len(dates):  # Make sure we found a valid date
                                 next_date = dates[idx]
-                                dataframes['rsi_weekly'].loc[ticker, next_date] = entry['value']
+                                dataframes['rsi_weekly'].loc[ticker, next_date] = entry.value
 
                     # Forward fill weekly values
                     dataframes['rsi_weekly'].loc[ticker] = dataframes['rsi_weekly'].loc[ticker].ffill()
@@ -204,13 +201,13 @@ class PolygonDataFetcher:
         # Process MACD data in parallel
         def fetch_macd_data(ticker):
             try:
-                macd_d = self.stocks_client.get_macd(ticker, timestamp_gte=self.analysis_date_start, timespan='day', 
-                                                    long_window_size=26, short_window_size=12, signal_window_size=9, 
-                                                    adjusted=True, limit=5000)
+                macd_d = self.client.get_macd(ticker, timestamp_gte=self.analysis_date_start.strftime('%Y-%m-%d'), timespan='day',
+                                              long_window=26, short_window=12, signal_window=9,
+                                              adjusted=True, limit=5000)
                 time.sleep(self.rate_limit_pause)
-                macd_w = self.stocks_client.get_macd(ticker, timestamp_gte=self.analysis_date_start, timespan='week',
-                                                    long_window_size=26, short_window_size=12, signal_window_size=9,
-                                                    adjusted=True, limit=5000)
+                macd_w = self.client.get_macd(ticker, timestamp_gte=self.analysis_date_start.strftime('%Y-%m-%d'), timespan='week',
+                                              long_window=26, short_window=12, signal_window=9,
+                                              adjusted=True, limit=5000)
                 time.sleep(self.rate_limit_pause)
                 return ticker, (macd_d, macd_w)
             except Exception as e:
@@ -223,19 +220,19 @@ class PolygonDataFetcher:
             for ticker, macd_data in executor.map(fetch_macd_data, TICKERS):
                 if macd_data:
                     macd_d, macd_w = macd_data
-                    if 'results' in macd_d and 'values' in macd_d['results']:
-                        for entry in macd_d['results']['values']:
-                            date = datetime.fromtimestamp(entry['timestamp']/1000).strftime('%Y-%m-%d')
+                    if macd_d and macd_d.values:
+                        for entry in macd_d.values:
+                            date = datetime.fromtimestamp(entry.timestamp/1000).strftime('%Y-%m-%d')
                             if date in dates:
-                                dataframes['macd_daily'].loc[ticker, date] = entry['histogram']
+                                dataframes['macd_daily'].loc[ticker, date] = entry.histogram
                     # Modified weekly MACD handling
-                    if 'results' in macd_w and 'values' in macd_w['results']:
-                        for entry in macd_w['results']['values']:
-                            sunday_date = pd.to_datetime(entry['timestamp'], unit='ms')
+                    if macd_w and macd_w.values:
+                        for entry in macd_w.values:
+                            sunday_date = pd.to_datetime(entry.timestamp, unit='ms')
                             idx = np.searchsorted(dates_array, sunday_date)
                             if idx < len(dates):
                                 next_date = dates[idx]
-                                dataframes['macd_weekly'].loc[ticker, next_date] = entry['histogram']
+                                dataframes['macd_weekly'].loc[ticker, next_date] = entry.histogram
 
                     # Forward fill weekly values
                     dataframes['macd_weekly'].loc[ticker] = dataframes['macd_weekly'].loc[ticker].ffill()
@@ -243,29 +240,39 @@ class PolygonDataFetcher:
         # Process quarterly earnings data in parallel
         def fetch_earnings_data(ticker):
             try:
-                earnings = self.reference_client.get_stock_financials_vx(ticker, filing_date_gte=self.analysis_date_start)
+                earnings_list = list(self.client.vx.list_stock_financials(
+                    ticker=ticker,
+                    filing_date_gte=self.analysis_date_start.strftime('%Y-%m-%d'),
+                    limit=100,
+                ))
                 time.sleep(self.rate_limit_pause)
-                if 'results' in earnings:
+                if earnings_list:
                     # Create two series with just filing dates to start
                     series = pd.Series(index=dates, dtype=float)
                     days_series = pd.Series(index=dates, dtype=float)
-                    
+
                     # Sort by filing date
-                    sorted_earnings = sorted(earnings['results'], key=lambda x: pd.to_datetime(x['filing_date']))
-                    
+                    sorted_earnings = sorted(earnings_list, key=lambda x: pd.to_datetime(x.filing_date))
+
                     # Convert filing dates to numpy array once
-                    filing_dates_array = np.array([pd.to_datetime(e['filing_date']) for e in sorted_earnings])
-                    
+                    filing_dates_array = np.array([pd.to_datetime(e.filing_date) for e in sorted_earnings])
+
                     # Set values at filing dates and backward fill
                     for earning in sorted_earnings:
-                        filing_date = pd.to_datetime(earning['filing_date']).strftime('%Y-%m-%d')
+                        filing_date = pd.to_datetime(earning.filing_date).strftime('%Y-%m-%d')
                         if filing_date in dates:
-                            value = earning.get('financials', {}).get('income_statement', {}).get('net_income_loss', {}).get('value', np.nan)
+                            value = np.nan
+                            if (earning.financials and
+                                earning.financials.income_statement and
+                                hasattr(earning.financials.income_statement, 'net_income_loss') and
+                                earning.financials.income_statement.net_income_loss and
+                                earning.financials.income_statement.net_income_loss.value is not None):
+                                value = earning.financials.income_statement.net_income_loss.value
                             series[filing_date] = value
-                    
+
                     # Backward fill earnings values
                     series = series.bfill()
-                    
+
                     # Vectorized days since calculation
                     date_objects = pd.to_datetime(dates)
                     for i, curr_date in enumerate(date_objects):
@@ -276,7 +283,7 @@ class PolygonDataFetcher:
                             days_series[dates[i]] = (curr_date - most_recent).days
                         else:
                             days_series[dates[i]] = np.nan
-                    
+
                     return ticker, (series, days_series)
                 return ticker, None
             except Exception as e:
@@ -323,23 +330,13 @@ class PolygonDataFetcher:
 
     def get_all_tickers(self, filename):
         save_path = filename
-        responses = []
-        range_limit = 1000
-        response = self.reference_client.get_tickers(symbol_type='CS', market='stocks', exchange='XNAS', active=True, limit=range_limit, date=self.analysis_date_end) #you should consider adding parameters to limit the total input
-        for i in range(range_limit):
-            responses.append(response['results'][i]['ticker'])
-        while "next_url" in response.keys():
-            response = self.reference_client.get_next_page(response)
-            for i in range(len(response['results'])):
-                responses.append(response['results'][i]['ticker'])
 
-        response = self.reference_client.get_tickers(symbol_type='CS', market='stocks', exchange='XNYS', active=True, limit=range_limit, date=self.analysis_date_end) #you should consider adding parameters to limit the total input
-        for i in range(range_limit):
-            responses.append(response['results'][i]['ticker'])
-        while "next_url" in response.keys():
-            response = self.reference_client.get_next_page(response)
-            for i in range(len(response['results'])):
-                responses.append(response['results'][i]['ticker'])
+        # Fetch all NASDAQ + NYSE common stock tickers at end date (auto-paginates)
+        responses = []
+        for t in self.client.list_tickers(type='CS', market='stocks', exchange='XNAS', active=True, limit=1000, date=self.analysis_date_end.strftime('%Y-%m-%d')):
+            responses.append(t.ticker)
+        for t in self.client.list_tickers(type='CS', market='stocks', exchange='XNYS', active=True, limit=1000, date=self.analysis_date_end.strftime('%Y-%m-%d')):
+            responses.append(t.ticker)
 
         date_string=self.analysis_date_end.strftime("%Y-%m-%d")
         filename = f'{date_string}_AllTickersEnd'
@@ -351,22 +348,12 @@ class PolygonDataFetcher:
             pickle.dump(responses, f)
         print(f"all pages recevied. total pages: {len(responses)}")
 
+        # Fetch all NASDAQ + NYSE common stock tickers at start date (auto-paginates)
         responses2 = []
-        response = self.reference_client.get_tickers(symbol_type='CS', market='stocks', exchange='XNAS', active=True, limit=range_limit, date=self.analysis_date_start) #you should consider adding parameters to limit the total input
-        for i in range(range_limit):
-            responses2.append(response['results'][i]['ticker'])
-        while "next_url" in response.keys():
-            response = self.reference_client.get_next_page(response)
-            for i in range(len(response['results'])):
-                responses2.append(response['results'][i]['ticker'])
-
-        response = self.reference_client.get_tickers(symbol_type='CS', market='stocks', exchange='XNYS', active=True, limit=range_limit, date=self.analysis_date_start) #you should consider adding parameters to limit the total input
-        for i in range(range_limit):
-            responses2.append(response['results'][i]['ticker'])
-        while "next_url" in response.keys():
-            response = self.reference_client.get_next_page(response)
-            for i in range(len(response['results'])):
-                responses2.append(response['results'][i]['ticker'])
+        for t in self.client.list_tickers(type='CS', market='stocks', exchange='XNAS', active=True, limit=1000, date=self.analysis_date_start.strftime('%Y-%m-%d')):
+            responses2.append(t.ticker)
+        for t in self.client.list_tickers(type='CS', market='stocks', exchange='XNYS', active=True, limit=1000, date=self.analysis_date_start.strftime('%Y-%m-%d')):
+            responses2.append(t.ticker)
 
         date_string=self.analysis_date_end.strftime("%Y-%m-%d")
         filename = f'{date_string}_AllTickersStart'
@@ -377,7 +364,7 @@ class PolygonDataFetcher:
         with open(out_path, 'wb') as f:
             pickle.dump(responses2, f)
         print(f"all pages recevied. total pages: {len(responses2)}")
-    
+
         TICKERS = [i for i in responses if i in responses2]
         TICKERS = sorted(list(set(TICKERS)))
         with open(save_path, 'wb') as l:
@@ -750,34 +737,33 @@ class PolygonDataFetcher:
         # Load the list of tickers
         with open(ticker_list, 'rb') as t:
             TICKERS = pickle.load(t)
-        
+
         # Remove duplicates and sort
         TICKERS = sorted(list(set(TICKERS)))
-        
+
         # Initialize a list to store closing prices
         closing_prices = []
-        
+
         # Iterate over tickers and fetch data
         for i in TICKERS:
             try:
-                placeholder = self.stocks_client.get_aggregate_bars(
-                    i, 
-                    self.check_date, 
-                    self.check_date, 
-                    timespan='day', 
-                    full_range=True, 
-                    run_parallel=False
-                )
-                # Append the closing price ('c') if it exists
-                if 'c' in placeholder[0]:
-                    closing_prices.append(placeholder[0]['c'])
+                bars = list(self.client.list_aggs(
+                    i,
+                    1,
+                    'day',
+                    self.check_date.strftime('%Y-%m-%d'),
+                    self.check_date.strftime('%Y-%m-%d'),
+                ))
+                # Append the closing price if it exists
+                if bars and bars[0].close is not None:
+                    closing_prices.append(bars[0].close)
                 else:
                     print(f"Closing price not found for {i}")
                     closing_prices.append(None)
             except Exception as e:
                 print(f"Failed to fetch data for {i}: {e}")
                 closing_prices.append(None)
-        
+
         # Return the list of closing prices
         return closing_prices
 
@@ -785,33 +771,32 @@ class PolygonDataFetcher:
         # Load the list of tickers
         with open(ticker_list, 'rb') as t:
             TICKERS = pickle.load(t)
-        
+
         # Remove duplicates and sort
         TICKERS = sorted(list(set(TICKERS)))
-        
+
         # Initialize a list to store closing prices
         purchase_prices = []
-        
+
         # Iterate over tickers and fetch data
         for i in TICKERS:
             try:
-                placeholder = self.stocks_client.get_aggregate_bars(
-                    i, 
-                    self.buy_date, 
-                    self.buy_date, 
-                    timespan='day',
-                    full_range=True, 
-                    run_parallel=False
-                )
-                # Append the closing price ('c') if it exists
-                if 'o' in placeholder[0]:
-                    purchase_prices.append(placeholder[0]['c'])
+                bars = list(self.client.list_aggs(
+                    i,
+                    1,
+                    'day',
+                    self.buy_date.strftime('%Y-%m-%d'),
+                    self.buy_date.strftime('%Y-%m-%d'),
+                ))
+                # Append the closing price if it exists
+                if bars and bars[0].open is not None:
+                    purchase_prices.append(bars[0].close)
                 else:
                     print(f"Opening price not found for {i}")
                     purchase_prices.append(None)
             except Exception as e:
                 print(f"Failed to fetch data for {i}: {e}")
                 purchase_prices.append(None)
-        
+
         # Return the list of closing prices
         return purchase_prices

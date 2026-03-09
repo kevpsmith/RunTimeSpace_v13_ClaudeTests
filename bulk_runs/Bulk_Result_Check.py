@@ -17,7 +17,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from datetime import datetime, timedelta
 import pandas as pd
 import time
-import polygon
+from polygon import RESTClient
 from pandas.tseries.offsets import BDay
 
 dates = [
@@ -33,7 +33,7 @@ dates = [
 pred_dir = os.path.join('predictions_output_random')
 results = []
 key = "cvV9m9XNz41uD7SMCLqftmzWKwDCI_9x"
-stocks_client = polygon.StocksClient(key, connect_timeout = 240, read_timeout = 240)
+client = RESTClient(api_key=key)
 for date in dates:
     date_pandas = pd.to_datetime(date)
     start_date = (date_pandas + BDay(1)).to_pydatetime()
@@ -51,14 +51,13 @@ for date in dates:
         ticker = row['Ticker']
 
         # Fetch the "weekly" bar for that range
-        ohlc_data = stocks_client.get_aggregate_bars(
-                    ticker, 
-                    start_date_str, 
-                    end_date_str, 
-                    timespan='day', 
-                    full_range=True, 
-                    run_parallel=False
-                )
+        ohlc_data = list(client.list_aggs(
+                    ticker,
+                    1,
+                    'day',
+                    start_date_str,
+                    end_date_str,
+                ))
 
         if ohlc_data is None:
             print(f"No data returned for {ticker} from {start_date_str} to {end_date_str}")
@@ -70,12 +69,12 @@ for date in dates:
             continue
         
         if ohlc_data:
-            agg_open = ohlc_data[0]['o']           # open of the first day
-            high_values = [item['h'] for item in ohlc_data if 'h' in item]
-            agg_high = max(high_values) 
-            low_values = [item['l'] for item in ohlc_data if 'l' in item]
+            agg_open = ohlc_data[0].open           # open of the first day
+            high_values = [item.high for item in ohlc_data if item.high is not None]
+            agg_high = max(high_values)
+            low_values = [item.low for item in ohlc_data if item.low is not None]
             agg_low = min(low_values)
-            agg_close = ohlc_data[-1]['c']
+            agg_close = ohlc_data[-1].close
             # We got a dict with {open, high, low, close}
             df_filtered.at[idx, 'Open'] = agg_open
             df_filtered.at[idx, 'High'] = agg_high

@@ -8,7 +8,7 @@
         #trades by stock by day
         #SIC Code
 #This is my import stack
-import polygon
+# polygon import removed - not used in this file
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import math
