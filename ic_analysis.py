@@ -1,13 +1,21 @@
 """
-IC Analysis: Compute Spearman rank IC for each feature against forward 1-week returns.
+IC Analysis: Compute Spearman rank IC for each feature against forward 1-week returns,
+including rolling walk-forward analysis to assess signal consistency over time.
 
 Reads .pkl files saved by PolygonDataFetcher (in data/placeholders/), computes
 forward returns from closing prices, then measures cross-sectional Spearman rank
 correlation (Information Coefficient) for every available feature.
 
+Walk-forward analysis uses 126-day rolling windows stepped by 21 days to show
+whether signal is stable, improving, or degrading over time.
+
 Includes two sanity checks:
   - random_noise: synthetic random feature, should produce IC ~ 0 and |t-stat| < 2
   - perfect_signal: forward return itself, should produce IC ~ 1.0
+
+Outputs:
+  - ic_results.csv: per-feature summary with overall and window-level statistics
+  - ic_decay_by_window.csv: mean IC per feature per rolling window
 
 Usage:
     python ic_analysis.py
@@ -152,6 +160,98 @@ def compute_cross_sectional_ic(feature_df, forward_returns_df, min_stocks=30):
     return ics
 
 
+def compute_cross_sectional_ic_by_date(feature_df, forward_returns_df, min_stocks=30):
+    """Same IC logic as compute_cross_sectional_ic but returns {date: ic} dict."""
+    common_dates = sorted(set(feature_df.columns) & set(forward_returns_df.columns))
+    ic_by_date = {}
+    for date in common_dates:
+        feat = feature_df[date].astype(float)
+        ret = forward_returns_df[date].astype(float)
+        valid = feat.notna() & ret.notna() & np.isfinite(feat) & np.isfinite(ret)
+        if valid.sum() < min_stocks:
+            continue
+        corr, _ = spearmanr(feat[valid].values, ret[valid].values)
+        if not np.isnan(corr):
+            ic_by_date[date] = corr
+    return ic_by_date
+
+
+def generate_windows(sorted_dates, window_size=126, step_size=21):
+    """Generate rolling window boundaries from a sorted date list."""
+    windows = []
+    i = 0
+    while i + window_size <= len(sorted_dates):
+        windows.append((sorted_dates[i], sorted_dates[i + window_size - 1]))
+        i += step_size
+    if not windows and len(sorted_dates) >= step_size:
+        windows.append((sorted_dates[0], sorted_dates[-1]))
+    return windows
+
+
+def compute_window_mean_ic(ic_by_date, window_start, window_end, min_obs=63):
+    """Mean IC for dates within [window_start, window_end]. NaN if < min_obs."""
+    ics = [v for d, v in ic_by_date.items() if window_start <= d <= window_end]
+    if len(ics) < min_obs:
+        return np.nan
+    return np.mean(ics)
+
+
+def compute_walk_forward(ic_by_date_dict, master_dates,
+                         window_size=126, step_size=21, min_obs=63):
+    """
+    Compute rolling walk-forward IC for all features.
+
+    Args:
+        ic_by_date_dict: {feature_name: {date: ic}} for every feature
+        master_dates: sorted list of all valid dates (from forward returns)
+        window_size: rolling window in trading days (126 ≈ 6 months)
+        step_size: step between windows (21 ≈ 1 month)
+        min_obs: minimum IC dates per window to include
+
+    Returns:
+        (decay_df, window_stats) where:
+        - decay_df: DataFrame with windows as rows, features as columns (mean IC)
+        - window_stats: {feature_name: dict of aggregate window statistics}
+    """
+    windows = generate_windows(master_dates, window_size, step_size)
+    if not windows:
+        return pd.DataFrame(), {}
+
+    feature_names = list(ic_by_date_dict.keys())
+    rows = []
+    for w_start, w_end in windows:
+        row = {'window_start': w_start, 'window_end': w_end}
+        for name in feature_names:
+            row[name] = compute_window_mean_ic(
+                ic_by_date_dict[name], w_start, w_end, min_obs
+            )
+        rows.append(row)
+
+    decay_df = pd.DataFrame(rows)
+
+    window_stats = {}
+    for name in feature_names:
+        vals = decay_df[name].dropna().values
+        if len(vals) == 0:
+            window_stats[name] = {
+                'ic_positive_window_pct': np.nan,
+                'ic_min_window': np.nan,
+                'ic_max_window': np.nan,
+                'ic_window_std': np.nan,
+                'num_windows': 0,
+            }
+        else:
+            window_stats[name] = {
+                'ic_positive_window_pct': round((vals > 0).mean() * 100, 1),
+                'ic_min_window': round(float(vals.min()), 4),
+                'ic_max_window': round(float(vals.max()), 4),
+                'ic_window_std': round(float(vals.std(ddof=1)) if len(vals) > 1 else 0.0, 4),
+                'num_windows': len(vals),
+            }
+
+    return decay_df, window_stats
+
+
 def compute_derived_features(features):
     """Simple derived features from raw .pkl data."""
     derived = {}
@@ -168,7 +268,7 @@ def compute_derived_features(features):
     return derived
 
 
-def summarize_ic(ic_dict):
+def summarize_ic(ic_dict, window_stats=None):
     rows = []
     for name, ics in ic_dict.items():
         if not ics:
@@ -180,7 +280,7 @@ def summarize_ic(ic_dict):
         t = mean / (std / np.sqrt(n)) if std > 0 else 0.0
         ir = mean / std if std > 0 else 0.0
         pct_pos = (arr > 0).mean() * 100
-        rows.append({
+        row = {
             'feature': name,
             'mean_IC': round(mean, 4),
             'std_IC': round(std, 4),
@@ -188,7 +288,10 @@ def summarize_ic(ic_dict):
             'IC_IR': round(ir, 4),
             'pct_positive': round(pct_pos, 1),
             'num_dates': n,
-        })
+        }
+        if window_stats and name in window_stats:
+            row.update(window_stats[name])
+        rows.append(row)
     return pd.DataFrame(rows).sort_values('t_stat', ascending=False, key=abs)
 
 
@@ -268,25 +371,78 @@ def main():
 
     print(f"\nComputing Spearman rank IC for {len(all_features)} features...")
     ic_dict = {}
+    ic_by_date_dict = {}
     for name, df in all_features.items():
-        ics = compute_cross_sectional_ic(df, forward_returns)
-        ic_dict[name] = ics
-        if ics:
-            print(f"  {name}: {len(ics)} dates, mean IC = {np.mean(ics):.4f}")
+        ic_by_date = compute_cross_sectional_ic_by_date(df, forward_returns)
+        ic_by_date_dict[name] = ic_by_date
+        ic_dict[name] = list(ic_by_date.values())
+        if ic_dict[name]:
+            print(f"  {name}: {len(ic_dict[name])} dates, mean IC = {np.mean(ic_dict[name]):.4f}")
         else:
             print(f"  {name}: no valid dates")
 
     run_sanity_checks(ic_dict)
 
-    summary = summarize_ic(ic_dict)
-    print("\n" + "=" * 90)
-    print("IC ANALYSIS RESULTS")
-    print("=" * 90)
-    print(summary.to_string(index=False))
-    print("=" * 90)
+    # Walk-forward rolling window analysis
+    valid_dates = sorted(
+        d for d in forward_returns.columns
+        if forward_returns[d].notna().any()
+    )
+    print(f"\nRunning walk-forward analysis "
+          f"(window=126d, step=21d, min_obs=63)...")
+    decay_df, window_stats = compute_walk_forward(
+        ic_by_date_dict, valid_dates,
+        window_size=126, step_size=21, min_obs=63,
+    )
+    if not decay_df.empty:
+        num_windows = len(decay_df)
+        print(f"  Generated {num_windows} rolling windows "
+              f"({decay_df['window_start'].iloc[0]} to "
+              f"{decay_df['window_end'].iloc[-1]})")
+    else:
+        print("  Not enough dates for rolling window analysis")
 
+    summary = summarize_ic(ic_dict, window_stats)
+
+    print("\n" + "=" * 120)
+    print("IC ANALYSIS RESULTS")
+    print("=" * 120)
+    print(summary.to_string(index=False))
+    print("=" * 120)
+
+    # Stability warnings
+    warnings_printed = False
+    for _, row in summary.iterrows():
+        name = row['feature']
+        if name in ('random_noise', 'perfect_signal'):
+            continue
+        if 'ic_positive_window_pct' in row and pd.notna(row.get('ic_positive_window_pct')):
+            pct = row['ic_positive_window_pct']
+            if pct < 60:
+                print(f"  WARNING: {name} shows unstable signal "
+                      f"— positive in only {pct:.0f}% of windows")
+                warnings_printed = True
+        if ('ic_window_std' in row and 'mean_IC' in row
+                and pd.notna(row.get('ic_window_std'))
+                and row['mean_IC'] != 0):
+            ratio = abs(row['ic_window_std'] / row['mean_IC'])
+            if ratio > 3:
+                print(f"  WARNING: {name} has noisy signal "
+                      f"— window std is {ratio:.1f}x the mean IC")
+                warnings_printed = True
+    if not warnings_printed:
+        print("  No stability warnings.")
+
+    # Save results
     summary.to_csv(args.output, index=False)
     print(f"\nResults saved to {args.output}")
+
+    if not decay_df.empty:
+        decay_output = args.output.replace('.csv', '_decay_by_window.csv')
+        if decay_output == args.output:
+            decay_output = 'ic_decay_by_window.csv'
+        decay_df.to_csv(decay_output, index=False)
+        print(f"Window decay saved to {decay_output}")
 
 
 if __name__ == "__main__":
