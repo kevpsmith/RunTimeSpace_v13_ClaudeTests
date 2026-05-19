@@ -5,7 +5,6 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader 
 from pytorch_lightning import Trainer
-from GPU_StockPredz_RL_Environment_v12 import SequenceSelectionEnv 
 from GPU_StockPredz_RL_Model_v12 import TransformerPolicyNetwork
 from GPU_StockPredz_RL_Dataset_v12 import SequenceSelectionDataset
 from RL_Data_Acquisition_v12 import PolygonDataFetcher #Use the file that fixes j index error on val and predict

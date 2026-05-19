@@ -4,29 +4,8 @@ import base64
 import time
 import os
 from polygon import RESTClient
-from datetime import datetime, timedelta, timedelta
+from datetime import datetime, timedelta
 import pytz
-
-def get_polygon_stock_prices(self, tickers):
-    """Fetches real-time stock prices using Polygon.io."""
-    if not self.polygon_api_key:
-        print("[ERROR] Polygon API key is missing in config.json.")
-        return {}
-
-    client = RESTClient(api_key=self.polygon_api_key)
-    all_prices = {}
-
-    for ticker in tickers:
-        try:
-            response = client.get_last_trade(ticker)
-            price = response.price
-            all_prices[ticker] = price
-            print(f"[INFO] {ticker}: ${price}")
-        except Exception as e:
-            print(f"[ERROR] Failed to fetch price for {ticker}: {str(e)}")
-
-    print(f"[INFO] Successfully fetched prices for {len(all_prices)} symbols.")
-    return all_prices
 
 
 class BrokerAPI:

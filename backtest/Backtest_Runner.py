@@ -20,7 +20,6 @@ import torch
 from torch.utils.data import DataLoader
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
-from model.GPU_StockPredz_RL_Environment_v12 import SequenceSelectionEnv
 from model.GPU_StockPredz_RL_Model_v12 import TransformerPolicyNetwork
 from model.GPU_StockPredz_RL_Dataset_v12 import SequenceSelectionDataset
 from data_acquisition.RL_Data_Acquisition_v12 import PolygonDataFetcher
@@ -114,9 +113,7 @@ def run_training_and_prediction(date, ticker_dir, output_dir):
         prediction_data = np.array(pickle.load(f))
 
     episodes = int(len(data)) - 1
-
-    train_env = SequenceSelectionEnv(data[:-1], growth_rates[:-1])
-    val_env = SequenceSelectionEnv(data[-1:], growth_rates[-1:])
+    num_sequences = len(tickers)
 
     d_model = 256
     nhead = 8
@@ -124,12 +121,12 @@ def run_training_and_prediction(date, ticker_dir, output_dir):
     layers = 8
     size = 100
 
-    model = TransformerPolicyNetwork(train_env, val_env, d_model, nhead, lr=learning_rate, num_layers=layers, size=size)
+    model = TransformerPolicyNetwork(num_sequences, d_model, nhead, lr=learning_rate, num_layers=layers, size=size)
 
-    train_dataset = SequenceSelectionDataset(train_env, model, num_episodes=episodes, randomize_series=True)
+    train_dataset = SequenceSelectionDataset(data[:-1], growth_rates[:-1], num_episodes=episodes, randomize_series=True)
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=False)
 
-    val_dataset = SequenceSelectionDataset(val_env, model, num_episodes=1, randomize_series=False)
+    val_dataset = SequenceSelectionDataset(data[-1:], growth_rates[-1:], num_episodes=1, randomize_series=False)
     val_loader = DataLoader(val_dataset, batch_size=1)
 
     checkpoint_dir = os.path.join("backtest_checkpoints", analysis_date_end)
