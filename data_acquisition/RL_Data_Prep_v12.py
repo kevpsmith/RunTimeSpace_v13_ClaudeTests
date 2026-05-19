@@ -1,20 +1,4 @@
-#This is updated code to get greater data from polygon.io
-    #new data includes the following
-        #Closing price by stock by day
-        #Quarterly earnings by stock by day
-        #Market cap by stock by day
-        #Shares outstanding by stock by day
-        #volume by stock by day
-        #trades by stock by day
-        #SIC Code
-#This is my import stack
-# polygon import removed - not used in this file
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-import math
-import pickle 
-import pandas as pd
-import torch
+import pickle
 import numpy as np
 
 class PolygonDataPrep:

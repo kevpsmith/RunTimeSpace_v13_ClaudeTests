@@ -1,7 +1,6 @@
 from polygon import RESTClient
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
-import math
 import pickle
 import pandas as pd
 import numpy as np
@@ -725,14 +724,6 @@ class PolygonDataFetcher:
             pickle.dump(val_tuples, f)
         print("Validation dataset assembly complete.")
 
-    # Helper function to save batches
-    def _save_batch(self, dataset_path, features, targets, batch_index):
-        """Helper function to save a batch to disk."""
-        batch_data = {'features': np.array(features), 'targets': np.array(targets)}
-        with open(f"{dataset_path}_batch_{batch_index}.pkl", 'wb') as f:
-            pickle.dump(batch_data, f)
-        print(f"Saved batch {batch_index} with shape {batch_data['features'].shape}")
-    
     def get_fwd_price(self, ticker_list):
         # Load the list of tickers
         with open(ticker_list, 'rb') as t:

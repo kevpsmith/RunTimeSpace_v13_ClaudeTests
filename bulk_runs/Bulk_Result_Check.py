@@ -1,19 +1,8 @@
 import os
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-
 import sys
-# Add the parent directory of bulk_runs (this_studio) to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import numpy as np
-import torch
-from torch.utils.data import DataLoader 
-from pytorch_lightning import Trainer
-from model.GPU_StockPredz_RL_Environment_v12 import SequenceSelectionEnv 
-from model.GPU_StockPredz_RL_Model_v12 import TransformerPolicyNetwork
-from model.GPU_StockPredz_RL_Dataset_v12 import SequenceSelectionDataset
 import pickle
-from pytorch_lightning.callbacks import ModelCheckpoint
 from datetime import datetime, timedelta
 import pandas as pd
 import time
