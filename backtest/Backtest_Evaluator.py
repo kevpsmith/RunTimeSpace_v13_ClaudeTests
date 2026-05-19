@@ -17,7 +17,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import argparse
 import numpy as np
 import pandas as pd
-import polygon
+from polygon import RESTClient
 from pandas.tseries.offsets import BDay
 from datetime import datetime
 import time
@@ -48,24 +48,23 @@ def get_prediction_dates(pred_dir):
     return sorted(dates)
 
 
-def fetch_ohlc_for_tickers(stocks_client, tickers, start_date_str, end_date_str):
+def fetch_ohlc_for_tickers(client, tickers, start_date_str, end_date_str):
     """Fetch aggregated OHLC data for a list of tickers over a date range."""
     results = {}
     for ticker in tickers:
         try:
-            ohlc_data = stocks_client.get_aggregate_bars(
+            ohlc_data = list(client.list_aggs(
                 ticker,
+                1,
+                'day',
                 start_date_str,
                 end_date_str,
-                timespan='day',
-                full_range=True,
-                run_parallel=False
-            )
+            ))
             if ohlc_data:
-                agg_open = ohlc_data[0]['o']
-                agg_high = max(item['h'] for item in ohlc_data if 'h' in item)
-                agg_low = min(item['l'] for item in ohlc_data if 'l' in item)
-                agg_close = ohlc_data[-1]['c']
+                agg_open = ohlc_data[0].open
+                agg_high = max(item.high for item in ohlc_data if item.high is not None)
+                agg_low = min(item.low for item in ohlc_data if item.low is not None)
+                agg_close = ohlc_data[-1].close
                 results[ticker] = {
                     'Open': agg_open,
                     'High': agg_high,
@@ -89,7 +88,7 @@ def calculate_return(ohlc):
     return oc_return
 
 
-def evaluate_single_date(stocks_client, pred_dir, date):
+def evaluate_single_date(client, pred_dir, date):
     """Evaluate model predictions for a single date."""
     file_name = f'{date}_v12_NewData_RegimeAtt_DoubleDigit_random_random.xlsx'
     filepath = os.path.join(pred_dir, file_name)
@@ -118,7 +117,7 @@ def evaluate_single_date(stocks_client, pred_dir, date):
     # Fetch actual forward returns for selected stocks
     selected_tickers = df_filtered['Ticker'].tolist()
     print(f"  {date}: {len(selected_tickers)} stocks selected, fetching forward returns...")
-    ohlc_data = fetch_ohlc_for_tickers(stocks_client, selected_tickers, start_str, end_str)
+    ohlc_data = fetch_ohlc_for_tickers(client, selected_tickers, start_str, end_str)
 
     stock_returns = []
     for ticker in selected_tickers:
@@ -134,7 +133,7 @@ def evaluate_single_date(stocks_client, pred_dir, date):
 
     # Fetch benchmark returns for the same period
     benchmark_returns = {}
-    benchmark_ohlc = fetch_ohlc_for_tickers(stocks_client, BENCHMARKS, start_str, end_str)
+    benchmark_ohlc = fetch_ohlc_for_tickers(client, BENCHMARKS, start_str, end_str)
     for bench in BENCHMARKS:
         if bench in benchmark_ohlc:
             benchmark_returns[bench] = calculate_return(benchmark_ohlc[bench])
@@ -272,7 +271,7 @@ def main():
                         help='Only evaluate dates up to this date')
     args = parser.parse_args()
 
-    stocks_client = polygon.StocksClient(args.key, connect_timeout=240, read_timeout=240)
+    client = RESTClient(api_key=args.key)
 
     # Find all available prediction dates
     dates = get_prediction_dates(args.pred_dir)
@@ -307,7 +306,7 @@ def main():
             continue
 
         print()
-        result = evaluate_single_date(stocks_client, args.pred_dir, date)
+        result = evaluate_single_date(client, args.pred_dir, date)
         if result:
             results.append(result)
 

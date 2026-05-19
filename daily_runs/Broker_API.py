@@ -3,8 +3,7 @@ import json
 import base64
 import time
 import os
-from polygon.rest import RESTClient  
-import polygon
+from polygon import RESTClient
 from datetime import datetime, timedelta, timedelta
 import pytz
 
@@ -14,14 +13,13 @@ def get_polygon_stock_prices(self, tickers):
         print("[ERROR] Polygon API key is missing in config.json.")
         return {}
 
-    # ✅ Create a Polygon client
-    client = RESTClient(self.polygon_api_key)
+    client = RESTClient(api_key=self.polygon_api_key)
     all_prices = {}
 
     for ticker in tickers:
         try:
-            response = client.get_last_trade(f"C:{ticker}")
-            price = response['last']['price']
+            response = client.get_last_trade(ticker)
+            price = response.price
             all_prices[ticker] = price
             print(f"[INFO] {ticker}: ${price}")
         except Exception as e:
@@ -204,21 +202,20 @@ class BrokerAPI:
         if not self.polygon_api_key:
             print("[ERROR] Polygon API key is missing in config.json.")
             return {}
-        stocks_client = polygon.StocksClient(self.polygon_api_key, connect_timeout = 240, read_timeout = 240)
+        client = RESTClient(api_key=self.polygon_api_key)
         all_prices = {}
         eastern_tz = pytz.timezone("America/New_York")
         today_eastern = datetime.now(eastern_tz).strftime("%Y-%m-%d")
         for ticker in tickers:
             try:
-                response = stocks_client.get_aggregate_bars(
-                    ticker, 
-                    "2025-03-07", #today_eastern, 
-                    "2025-03-07", #today_eastern, 
-                    timespan='day', 
-                    full_range=False, 
-                    run_parallel=False
-                )
-                price = response['results'][0]['c']
+                bars = list(client.list_aggs(
+                    ticker,
+                    1,
+                    'day',
+                    today_eastern,
+                    today_eastern,
+                ))
+                price = bars[0].close
                 all_prices[ticker] = price
                 print(f"[INFO] {ticker}: ${price}")
             except Exception as e:
@@ -232,10 +229,10 @@ class BrokerAPI:
             print("[ERROR] Polygon API key is missing in config.json.")
             return False
 
-        reference_client = polygon.ReferenceClient(self.polygon_api_key, connect_timeout = 240, read_timeout = 240)
+        client = RESTClient(api_key=self.polygon_api_key)
         try:
-            response = reference_client.get_market_status()
-            if response['market'] == 'closed' and response['afterHours']:
+            response = client.get_market_status()
+            if response.market == 'closed' and response.after_hours:
                 print("[INFO] Market was open earlier today.")
                 return True
             else:
